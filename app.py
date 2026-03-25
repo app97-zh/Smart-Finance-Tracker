@@ -151,30 +151,34 @@ def extract_core_features(text):
     return words
 
 def are_names_similar(name1, name2):
-    """基于核心特征词组的相似度判定 (增强防误杀版)"""
+    """基于位置权重的核心特征词组相似度判定 (普适防误杀版)"""
     features1 = extract_core_features(name1)
     features2 = extract_core_features(name2)
     
     if not features1 or not features2:
         return False
         
-    # 核心策略 1：如果它们提取出的最核心的第一个特征词一样，大概率是同店
-    if features1[0] == features2[0]:
+    # 策略 1：主店名（第一个词）完全一样，且长度 > 3 (防 gas, deli 等)
+    if features1[0] == features2[0] and len(features1[0]) > 3:
         return True
         
-    # 核心策略 2：看交集。
-    intersection = set(features1).intersection(set(features2))
+    # 策略 2：前缀交集判定 (只看前 3 个词)
+    # 真正的商户名几乎永远在最前面。如果重合发生在第4个词以后，那大概率是系统附注或人名。
+    prefix1 = set(features1[:3])
+    prefix2 = set(features2[:3])
+    
+    intersection = prefix1.intersection(prefix2)
     
     if not intersection:
         return False
         
-    # 提高门槛：如果第一个词不一样，单靠1个词的交集很容易误杀。
-    # 我们要求：至少要有 2 个词相交，或者这唯一相交的那个词必须特别长(>=6个字母，说明非常有特征)
+    # 如果前 3 个词里有 2 个词一样，妥妥的同店 (比如 apple store 和 apple retail)
     if len(intersection) >= 2:
         return True
         
+    # 如果前 3 个词里只有 1 个词一样，这个词必须足够长且有特征
     longest_match = max(intersection, key=len)
-    if len(longest_match) >= 6:
+    if len(longest_match) >= 5:
         return True
         
     return False
