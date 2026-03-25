@@ -16,7 +16,6 @@ st.set_page_config(page_title="Shareable 智能财务管家", page_icon="🌍", 
 # 常量与全局设定
 # ==========================================
 GLOBAL_KNOWLEDGE_FILE = "shared_knowledge.csv"
-LOCAL_PRIVATE_KNOWLEDGE_FILE = "local_private_knowledge.csv" # 专门存敏感转账类记忆
 
 # 【个人隐私黑名单】：包含这些关键词的交易，绝对不会被上传到公共大脑，而是存在本地
 PERSONAL_BLACKLIST = ["zelle", "venmo", "transfer", "online banking", "payment", "epay", "check", "deposit", "payroll", "ach"]
@@ -38,11 +37,8 @@ CATEGORIES = [
     "📦 生活杂项", "🏦 银行手续费", "💳 信用卡还款", "💰 内部转账", "其他", "其他收入"
 ]
 
-# 初始内置字典 (最高优先级)
+# 初始内置字典 (包含最高优先级词汇)
 KEYWORD_MAPPING = {
-    "💳 信用卡还款": ["payment thank you", "autopay", "payment to", "chase card", "credit card bill payment", "chase credit crd", "american express des:ach", "epay", "online banking payment to crd"],
-    "💰 内部转账": ["online banking transfer", "zelle payment", "venmo"],
-    "🏦 银行手续费": ["annual membership fee", "fee", "interest"],
     "☕️ 咖啡奶茶": ["boba", "milk tea", "roaster", "voyager", "coffee", "moon tea", "umetea", "dr.ink", "molly tea", "matcha town", "naisnow", "shuyi", "chicha", "taningca", "minglewood", "little bear cafe", "tea", "starbucks", "peets"],
     "🍱 餐饮外卖": ["porridge", "noodle", "bbq", "grill", "bakery", "cake", "pho", "bafang", "dumpling", "chipotle", "doordash", "dd *", "fantuan", "seamless", "hunan mifen", "malatang", "sweetgreen", "lee's sandwiches", "snack*", "uep*", "restaurant", "dining", "mcdonald", "wendy", "popeyes", "kfc", "kitchen", "sushi", "bistro", "cafe", "pizza", "waiter.com"],
     "🛍️ 购物超市": ["market", "mart", "grocery", "plaza", "amazon", "amzn", "sephora", "lancome", "sports basement", "parallel mountian", "target", "walmart", "costco", "safeway", "99 ranch", "weee", "wholefds", "whole foods", "trader joe"],
@@ -53,10 +49,15 @@ KEYWORD_MAPPING = {
     "🎿 娱乐票务": ["palisades", "tahoe", "ski", "movie", "steam games", "tm *", "ticketmaster", "livenation", "amc", "cinemark", "stubhub", "concert"],
     "🏥 医疗健康": ["dental", "dentist", "clinic", "doctor", "vision", "quest diagnostics", "qdi", "cvs", "pharmacy", "walgreens", "hospital", "pets best", "pet insurance", "kaiser", "sutter"],
     "🏠 房租水电": ["jpmorgan-bzb312", "jpmorgan-bzo4312", "yardi service", "ladwp", "pgande", "rent", "water", "trash", "sewer"],
-    "📦 生活杂项": ["usps", "comcast", "utilities", "apple", "google", "openai"]
+    "📦 生活杂项": ["usps", "comcast", "utilities", "apple", "google", "openai"],
+    
+    # 【最高优先级词库】
+    "🏦 银行手续费": ["annual membership fee", "fee", "interest"],
+    "💳 信用卡还款": ["payment thank you", "autopay", "payment to", "chase card", "credit card bill payment", "chase credit crd", "american express des:ach", "epay", "online banking payment to crd"],
+    "💰 内部转账": ["online banking transfer", "zelle payment", "venmo"]
 }
 
-# 提取出所有需要“绝对免疫连坐”的关键词
+# 提取出所有需要“绝对免疫连坐”的关键词 (用于防御)
 IMMUNE_KEYWORDS = set()
 for kw_list in [KEYWORD_MAPPING["💳 信用卡还款"], KEYWORD_MAPPING["💰 内部转账"], KEYWORD_MAPPING["🏦 银行手续费"]]:
     IMMUNE_KEYWORDS.update(kw_list)
@@ -65,7 +66,6 @@ def is_immune(desc):
     """判断一条交易描述是否属于绝对免疫项 (含有还款/转账/手续费等铁词)"""
     desc_lower = str(desc).lower()
     return any(kw in desc_lower or kw.replace(' ', '') in desc_lower.replace(' ', '') for kw in IMMUNE_KEYWORDS)
-
 
 # ==========================================
 # 会话状态管理 
@@ -141,7 +141,6 @@ def update_knowledge(description, category):
 def extract_core_features(text):
     text = str(text).lower()
     text = re.sub(r'^(sq\s*\*|tst\s*\*|sp\s*\*|paypal\s*\*|poy\s*\*|dd\s+doordash\s*)', '', text)
-    # 最强斩断器：一切系统描述直接抛弃
     text = re.split(r'\b(des:|id:|indn:|co id:|auth:|web)\b', text)[0]
     text = re.sub(r'\b\d{2}/\d{2}\b', ' ', text)
     text = re.sub(r'\b\d{3}-\d{3}-\d{4}\b', ' ', text)
@@ -171,7 +170,8 @@ def auto_categorize(description, amount):
     desc = str(description).strip()
     desc_lower = desc.lower()
     
-    # 【最高优先级 0】: 强制拦截！只要触发了还款、转账等关键词，神仙也拦不住，直接归类
+    # 🔴【绝对最高优先级 0】: 强制拦截！
+    # 只要触发了还款、转账等关键词，神仙也拦不住，直接锁定归类，不看云端，不看本地！
     for category in ["💳 信用卡还款", "💰 内部转账", "🏦 银行手续费"]:
         for keyword in KEYWORD_MAPPING[category]:
             if keyword in desc_lower or keyword.replace(' ', '') in desc_lower.replace(' ', ''):
@@ -343,7 +343,7 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### 📂 恢复历史记忆")
-    st.write("导入您之前下载的压缩包 (包含了您的账单和私有敏感分类)。")
+    st.write("导入您之前下载的个人记录 (包含您的账单和私有敏感分类)。")
     history_file = st.file_uploader("导入 personal_history.csv", type="csv")
     
     if history_file is not None:
@@ -514,7 +514,8 @@ with tab_dashboard:
                                 target_desc = row['交易描述']
                                 new_cat = row['类别']
                                 
-                                # 【免疫结界】：只允许连坐那些不包含敏感词的普通商户
+                                # 🔴【绝对防御结界】
+                                # 连坐规则：只有不免疫（不含还款词汇）的条目，才允许被连坐改掉！
                                 mask = my_df['交易描述'].apply(lambda x: x == target_desc or (are_names_similar(x, target_desc) and not is_immune(x)))
                                 
                                 affected_count = mask.sum()
