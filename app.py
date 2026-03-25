@@ -151,34 +151,24 @@ def extract_core_features(text):
     return words
 
 def are_names_similar(name1, name2):
-    """基于位置权重的核心特征词组相似度判定 (普适防误杀版)"""
+    """最强防误杀版：只认主店名 (First Core Word)"""
     features1 = extract_core_features(name1)
     features2 = extract_core_features(name2)
     
     if not features1 or not features2:
         return False
         
-    # 策略 1：主店名（第一个词）完全一样，且长度 > 3 (防 gas, deli 等)
-    if features1[0] == features2[0] and len(features1[0]) > 3:
+    # 唯一连坐条件：提取出的第一个核心词（主店名）必须完全一样，
+    # 且这个词不能是像 gas, car 这种太短太泛的词 (长度必须 >= 4)
+    # 比如: 
+    # ['apple', 'store'] 和 ['apple', 'pay'] -> 连坐 ✅
+    # ['mcdonalds', 'sj'] 和 ['mcdonalds', 'ny'] -> 连坐 ✅
+    # ['uscis', 'haoxiang'] 和 ['chase', 'credit', 'haoxiang'] -> 拒绝 ❌ (uscis != chase)
+    if features1[0] == features2[0] and len(features1[0]) >= 4:
         return True
         
-    # 策略 2：前缀交集判定 (只看前 3 个词)
-    # 真正的商户名几乎永远在最前面。如果重合发生在第4个词以后，那大概率是系统附注或人名。
-    prefix1 = set(features1[:3])
-    prefix2 = set(features2[:3])
-    
-    intersection = prefix1.intersection(prefix2)
-    
-    if not intersection:
-        return False
-        
-    # 如果前 3 个词里有 2 个词一样，妥妥的同店 (比如 apple store 和 apple retail)
-    if len(intersection) >= 2:
-        return True
-        
-    # 如果前 3 个词里只有 1 个词一样，这个词必须足够长且有特征
-    longest_match = max(intersection, key=len)
-    if len(longest_match) >= 5:
+    # 还有一个小小的特例：如果两个名字提取出来后完全一模一样，那当然连坐
+    if features1 == features2:
         return True
         
     return False
