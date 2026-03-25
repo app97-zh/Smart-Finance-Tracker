@@ -519,11 +519,30 @@ with tab_dashboard:
                             my_df = st.session_state['my_df']
                             total_updated = 0
                             
+                            # 定义最高优先级的“免疫词根” (只要名字里包含这些，拒绝被连坐)
+                            immune_keywords = set()
+                            for kw_list in [
+                                KEYWORD_MAPPING["💳 信用卡还款"], 
+                                KEYWORD_MAPPING["💰 内部转账"],
+                                KEYWORD_MAPPING["🏦 银行手续费"]
+                            ]:
+                                immune_keywords.update(kw_list)
+                            
+                            def is_immune(desc):
+                                desc_lower = str(desc).lower()
+                                return any(kw in desc_lower or kw.replace(' ', '') in desc_lower.replace(' ', '') for kw in immune_keywords)
+
                             for _, row in changed_rows.iterrows():
                                 target_desc = row['交易描述']
                                 new_cat = row['类别']
                                 
-                                mask = my_df['交易描述'].apply(lambda x: are_names_similar(x, target_desc) or x == target_desc)
+                                # 构建连坐条件：
+                                # 1. 名字相似 (或完全一样)
+                                # 2. 【核心保护】如果目标名字含有免疫关键词，坚决不允许它被连坐改掉！除非是用户直接点击修改的那一个。
+                                mask = my_df['交易描述'].apply(
+                                    lambda x: x == target_desc or (are_names_similar(x, target_desc) and not is_immune(x))
+                                )
+                                
                                 affected_count = mask.sum()
                                 total_updated += affected_count
                                 
