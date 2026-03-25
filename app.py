@@ -128,46 +128,41 @@ def update_global_knowledge(description, category):
     return True
 
 def extract_core_features(text):
-    """提取商户名的核心特征词组 (过滤掉地点、日期、通用词、各种ID)"""
+    """最强净化器：扒光所有银行系统外衣，只留真正的店名"""
     text = str(text).lower()
     
-    # 1. 剔除常见的收银机前缀
+    # 1. 剔除常见的收银机和支付网关前缀
     text = re.sub(r'^(sq\s*\*|tst\s*\*|sp\s*\*|paypal\s*\*|poy\s*\*|dd\s+doordash\s*)', '', text)
     
-    # 2. 剔除日期格式 (如 04/25, 11/18) 和 电话号码
+    # 2. 剔除极其容易导致连坐的银行系统标识符！(连同它后面的内容一起切断)
+    # 只要出现了 DES: / ID: / INDN: / CO ID: ，说明后面全是银行的废话和人名，直接把这些截断扔掉！
+    text = re.split(r'\b(des:|id:|indn:|co id:|auth:|web)\b', text)[0]
+    
+    # 3. 剔除日期格式 (如 04/25, 11/18) 和 电话号码
     text = re.sub(r'\b\d{2}/\d{2}\b', ' ', text)
     text = re.sub(r'\b\d{3}-\d{3}-\d{4}\b', ' ', text)
     
-    # 3. 剔除银行流水里常见的混淆ID模式 (比如 ID:XXXXX12345, CO ID:, NNX27L)
-    text = re.sub(r'\bid\s*:?\s*[a-z0-9]+\b', ' ', text)
-    text = re.sub(r'xxxxx[0-9]+', ' ', text)
-    
+    # 4. 提取有效字母词
     words = []
     for w in re.split(r'[^a-z0-9]', text):
-        # 只要长度>=3，且不是纯数字，且不是停用词/地点词
         if len(w) >= 3 and not w.isnumeric() and w not in STOP_WORDS:
             words.append(w)
             
     return words
 
 def are_names_similar(name1, name2):
-    """最强防误杀版：只认主店名 (First Core Word)"""
+    """基于纯净特征的最强防误杀版"""
     features1 = extract_core_features(name1)
     features2 = extract_core_features(name2)
     
     if not features1 or not features2:
         return False
         
-    # 唯一连坐条件：提取出的第一个核心词（主店名）必须完全一样，
-    # 且这个词不能是像 gas, car 这种太短太泛的词 (长度必须 >= 4)
-    # 比如: 
-    # ['apple', 'store'] 和 ['apple', 'pay'] -> 连坐 ✅
-    # ['mcdonalds', 'sj'] 和 ['mcdonalds', 'ny'] -> 连坐 ✅
-    # ['uscis', 'haoxiang'] 和 ['chase', 'credit', 'haoxiang'] -> 拒绝 ❌ (uscis != chase)
+    # 只认死理：提取出的第一个核心词（主店名）必须完全一样，且长度必须 >= 4
     if features1[0] == features2[0] and len(features1[0]) >= 4:
         return True
         
-    # 还有一个小小的特例：如果两个名字提取出来后完全一模一样，那当然连坐
+    # 如果完全一样，当然连坐
     if features1 == features2:
         return True
         
