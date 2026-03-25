@@ -52,7 +52,6 @@ KEYWORD_MAPPING = {
     "💰 内部转账": ["online banking transfer", "zelle payment", "venmo"],
 }
 
-# 🔧 FIX: 预计算免疫关键词集合（还款/转账/手续费里的所有词）
 IMMUNE_CATEGORIES = {"💳 信用卡还款", "💰 内部转账", "🏦 银行手续费"}
 IMMUNE_KEYWORDS = []
 for _cat in IMMUNE_CATEGORIES:
@@ -60,12 +59,10 @@ for _cat in IMMUNE_CATEGORIES:
 
 
 def _match_keyword(desc_lower, keyword):
-    """检查 desc_lower 是否包含 keyword（支持去空格模糊）"""
     return keyword in desc_lower or keyword.replace(" ", "") in desc_lower.replace(" ", "")
 
 
 def is_immune(desc):
-    """🔧 FIX: 判断一条交易描述是否命中了还款/转账/手续费关键词"""
     d = str(desc).lower()
     return any(_match_keyword(d, kw) for kw in IMMUNE_KEYWORDS)
 
@@ -75,7 +72,6 @@ def is_immune(desc):
 # ==========================================
 if "my_df" not in st.session_state:
     st.session_state["my_df"] = pd.DataFrame(columns=["日期", "交易描述", "金额", "类别"])
-# 🔧 FIX: 新增本地私有记忆库（存放敏感转账的手动分类）
 if "local_memory" not in st.session_state:
     st.session_state["local_memory"] = pd.DataFrame(columns=["交易描述", "类别"])
 
@@ -115,12 +111,10 @@ def save_global_knowledge(df):
 
 
 def update_knowledge(description, category):
-    """🔧 FIX: 智能分发——敏感词存本地 session，普通商家存 GitHub"""
     desc_lower = str(description).lower()
     is_private = any(bw in desc_lower for bw in PERSONAL_BLACKLIST)
 
     if is_private:
-        # 存入本地私有记忆
         lm = st.session_state["local_memory"]
         match_idx = lm[lm["交易描述"].str.lower() == desc_lower].index
         if not match_idx.empty:
@@ -129,7 +123,7 @@ def update_knowledge(description, category):
             st.session_state["local_memory"] = pd.concat(
                 [lm, pd.DataFrame([{"交易描述": description, "类别": category}])], ignore_index=True
             )
-        return False  # 私有
+        return False
     else:
         global_df = load_global_knowledge()
         match_idx = global_df[global_df["交易描述"].str.lower() == desc_lower].index
@@ -143,7 +137,7 @@ def update_knowledge(description, category):
                 ignore_index=True,
             )
         save_global_knowledge(global_df)
-        return True  # 全局
+        return True
 
 
 # ==========================================
@@ -151,14 +145,10 @@ def update_knowledge(description, category):
 # ==========================================
 def extract_core_features(text):
     text = str(text).lower()
-    # 去收银机前缀
     text = re.sub(r"^(sq\s*\*|tst\s*\*|sp\s*\*|paypal\s*\*|poy\s*\*|dd\s+doordash\s*)", "", text)
-    # 🔧 FIX: 一刀斩断银行系统描述——DES: / ID: / INDN: 后面全是废话和人名
     text = re.split(r"\b(des:|id:|indn:|co\s*id:|web\b)", text)[0]
-    # 去日期和电话
     text = re.sub(r"\b\d{2}/\d{2}\b", " ", text)
     text = re.sub(r"\b\d{3}-\d{3}-\d{4}\b", " ", text)
-
     words = []
     for w in re.split(r"[^a-z0-9]", text):
         if len(w) >= 3 and not w.isnumeric() and w not in STOP_WORDS:
@@ -167,35 +157,31 @@ def extract_core_features(text):
 
 
 def are_names_similar(name1, name2):
-    """🔧 FIX: 只认主店名（第一个核心词），不搞任何交集匹配"""
     f1 = extract_core_features(name1)
     f2 = extract_core_features(name2)
     if not f1 or not f2:
         return False
-    # 唯一条件：第一个特征词完全一样，且长度>=4
     if f1[0] == f2[0] and len(f1[0]) >= 4:
         return True
-    # 完全一样也行
     if f1 == f2:
         return True
     return False
 
 
 # ==========================================
-# 🔧 FIX: 分类引擎（彻底重写优先级）
+# 分类引擎 (4层优先级)
 # ==========================================
 def auto_categorize(description, amount):
     desc = str(description).strip()
     desc_lower = desc.lower()
 
-    # ━━━ 第 0 层：绝对最高优先级 ━━━
-    # 还款 / 转账 / 手续费 关键词一旦命中，直接锁死，不再查询任何数据库！
+    # 第0层：绝对最高优先级 — 还款/转账/手续费
     for cat in IMMUNE_CATEGORIES:
         for kw in KEYWORD_MAPPING[cat]:
             if _match_keyword(desc_lower, kw):
                 return cat
 
-    # ━━━ 第 1 层：本地私有记忆（存放 USCIS 等敏感项） ━━━
+    # 第1层：本地私有记忆
     lm = st.session_state["local_memory"]
     if not lm.empty:
         exact = lm[lm["交易描述"].str.lower() == desc_lower]
@@ -208,7 +194,7 @@ def auto_categorize(description, amount):
                 if hf and desc_feat[0] == hf[0] and len(desc_feat[0]) >= 4:
                     return row["类别"]
 
-    # ━━━ 第 2 层：全局 GitHub 大脑 ━━━
+    # 第2层：全局 GitHub 大脑
     global_df = load_global_knowledge()
     if not global_df.empty:
         valid = global_df[global_df["类别"].isin(CATEGORIES)].copy()
@@ -222,7 +208,7 @@ def auto_categorize(description, amount):
                 if hf and desc_feat[0] == hf[0] and len(desc_feat[0]) >= 4:
                     return row["类别"]
 
-    # ━━━ 第 3 层：内置字典兜底（跳过已在第0层处理的类别） ━━━
+    # 第3层：内置字典兜底
     for cat, keywords in KEYWORD_MAPPING.items():
         if cat in IMMUNE_CATEGORIES:
             continue
@@ -230,7 +216,7 @@ def auto_categorize(description, amount):
             if _match_keyword(desc_lower, kw):
                 return cat
 
-    # ━━━ 第 4 层：正数=收入，其余=其他 ━━━
+    # 第4层：正数=收入，其余=其他
     try:
         if float(amount) > 0:
             return "其他收入"
@@ -240,7 +226,7 @@ def auto_categorize(description, amount):
 
 
 # ==========================================
-# 🔧 FIX: 退款抵消（只保留一个，删除重复定义）
+# 退款抵消
 # ==========================================
 def apply_refund_cancellation(df):
     if df.empty:
@@ -354,33 +340,46 @@ def parse_csv(uploaded_file):
 # ==========================================
 # UI 布局
 # ==========================================
+
+# --- 侧边栏 ---
 with st.sidebar:
     st.markdown("### 🔒 隐私与数据安全")
     st.info("您的账单数据**仅存在于本次浏览器会话中**，关闭即销毁。")
+
+    # 状态指示器
+    st.markdown("---")
+    st.markdown("### 📊 当前状态")
+    rec_count = len(st.session_state["my_df"])
+    mem_count = len(st.session_state["local_memory"])
+    if rec_count > 0:
+        st.success(f"📋 账单记录：**{rec_count}** 条")
+    else:
+        st.warning("📋 暂无账单数据")
+    if mem_count > 0:
+        st.info(f"🧠 私有记忆：**{mem_count}** 条")
+
     st.markdown("---")
     st.markdown("### 📂 恢复历史记忆")
     history_file = st.file_uploader("导入 personal_history.csv", type="csv")
     if history_file is not None:
         try:
             hist_df = pd.read_csv(history_file); hist_df["日期"] = pd.to_datetime(hist_df["日期"]).dt.date
-            st.session_state["my_df"] = hist_df; st.success("账单导入成功！")
+            st.session_state["my_df"] = hist_df; st.success("✅ 账单导入成功！")
         except Exception:
-            st.error("导入失败，文件格式不正确。")
+            st.error("❌ 导入失败，文件格式不正确。")
 
-    # 🔧 FIX: 新增私有记忆导入
     memory_file = st.file_uploader("导入 local_memory.csv (私有敏感词库)", type="csv")
     if memory_file is not None:
         try:
             st.session_state["local_memory"] = pd.read_csv(memory_file)
-            st.success("私有敏感记忆导入成功！")
+            st.success("✅ 私有敏感记忆导入成功！")
         except Exception:
             pass
 
     st.markdown("---")
+    st.markdown("### 💾 保存数据")
     if not st.session_state["my_df"].empty:
-        st.write(f"当前记录：**{len(st.session_state['my_df'])}** 条")
         st.download_button("💾 下载最新账单数据", st.session_state["my_df"].to_csv(index=False).encode("utf-8"), "personal_history.csv", "text/csv")
-    # 🔧 FIX: 新增私有记忆下载
     if not st.session_state["local_memory"].empty:
         st.download_button("💾 下载私有敏感词库", st.session_state["local_memory"].to_csv(index=False).encode("utf-8"), "local_memory.csv", "text/csv",
                            help="保存了 USCIS / 保险 等敏感转账的手动分类记忆")
@@ -388,50 +387,99 @@ with st.sidebar:
         st.session_state["my_df"] = pd.DataFrame(columns=["日期", "交易描述", "金额", "类别"]); st.rerun()
 
 
+# --- 主界面 ---
 st.title("🌍 智能财务管家 (Cloud & Crowdsourced)")
 st.markdown("每一次人工修正都会让 AI 大脑变得更聪明！*(Zelle等隐私转账将被自动拦截，不会上传全局)*")
 
 tab_import, tab_dashboard, tab_trends, tab_export = st.tabs(["📥 账单导入与修正", "📊 月度消费概览", "📈 历史支出趋势追踪", "📥 自定义多月导出"])
 
+# ==========================================
+# Tab 1: 账单导入
+# ==========================================
 with tab_import:
     st.header("1. 上传新账单 (PDF或CSV)")
     uploaded_file = st.file_uploader("支持 Chase PDF, Chase CSV, BoA CSV", type=["pdf", "csv"], key="new_statement")
     if uploaded_file is not None:
-        with st.spinner("正在呼叫全局大脑进行智能分类..."):
+        # 带步骤的进度反馈
+        with st.status("正在智能分析你的账单...", expanded=True) as status:
+            st.write("📄 正在读取文件...")
             fn = uploaded_file.name.lower()
             new_df = parse_chase_pdf(uploaded_file) if fn.endswith(".pdf") else parse_csv(uploaded_file) if fn.endswith(".csv") else pd.DataFrame()
+
             if new_df.empty:
+                status.update(label="❌ 解析失败", state="error")
                 st.warning("未能提取到记录。")
             else:
-                st.success(f"成功提取 {len(new_df)} 条交易记录！")
-                st.subheader("2. 人工修正窗口 (双击类别修改)")
-                edited_df = st.data_editor(new_df, column_config={
-                    "类别": st.column_config.SelectboxColumn("消费类别", options=CATEGORIES, required=True),
-                    "金额": st.column_config.NumberColumn("金额", format="%.2f"),
-                    "日期": st.column_config.DateColumn("交易日期"),
-                }, hide_index=True, num_rows="dynamic", use_container_width=True)
+                st.write(f"🧠 正在对 {len(new_df)} 条交易进行智能分类...")
+                st.write("✅ 分类完成！")
+                status.update(label=f"✅ 成功提取 {len(new_df)} 条交易记录", state="complete")
 
-                if st.button("💾 确认无误，并入我的看板", type="primary"):
+        if not new_df.empty:
+            # 分类结果概览卡片
+            st.subheader("📊 自动分类结果概览")
+            cat_counts = new_df["类别"].value_counts()
+            cols = st.columns(min(len(cat_counts), 4))
+            for i, (cat, count) in enumerate(cat_counts.items()):
+                with cols[i % len(cols)]:
+                    cat_amount = new_df[new_df["类别"] == cat]["金额"].sum()
+                    st.metric(label=cat, value=f"{count} 笔", delta=f"${abs(cat_amount):.0f}")
+
+            st.markdown("---")
+            st.subheader("2. 人工修正窗口 (双击类别修改)")
+            st.caption("💡 提示：如果发现分类不对，直接双击类别列修改。修改后点击下方按钮，系统会自动学习你的修正。")
+
+            edited_df = st.data_editor(new_df, column_config={
+                "类别": st.column_config.SelectboxColumn("消费类别", options=CATEGORIES, required=True),
+                "金额": st.column_config.NumberColumn("金额", format="%.2f"),
+                "日期": st.column_config.DateColumn("交易日期"),
+            }, hide_index=True, num_rows="dynamic", use_container_width=True)
+
+            if st.button("💾 确认无误，并入我的看板", type="primary", use_container_width=True):
+                with st.status("正在处理...", expanded=True) as save_status:
+                    st.write("🔄 合并数据中...")
                     combined = pd.concat([st.session_state["my_df"], edited_df]).drop_duplicates(subset=["日期", "交易描述", "金额"])
+
+                    st.write("🧹 检测退款抵消...")
                     cleaned, cnt = apply_refund_cancellation(combined)
                     st.session_state["my_df"] = cleaned
-                    if cnt > 0: st.toast(f"🧹 成功抵消了 {cnt} 对退款！")
+                    if cnt > 0:
+                        st.write(f"✅ 成功抵消了 {cnt} 对退款！")
 
                     diff = edited_df["类别"] != new_df["类别"]
                     if diff.any():
+                        st.write("🧠 同步修正到记忆库...")
                         shared_c = private_c = 0
                         for _, row in edited_df[diff].iterrows():
                             if update_knowledge(row["交易描述"], row["类别"]): shared_c += 1
                             else: private_c += 1
-                        if shared_c: st.toast(f"🌍 {shared_c} 条已上传至公共大脑")
-                        if private_c: st.toast(f"🔒 {private_c} 条已存入本地私有记忆")
-                    st.balloons(); st.success("数据已入库！")
+                        if shared_c: st.write(f"🌍 {shared_c} 条已上传至公共大脑")
+                        if private_c: st.write(f"🔒 {private_c} 条已存入本地私有记忆")
+
+                    save_status.update(label="✅ 数据入库完成！", state="complete")
+
+                st.balloons()
+                st.success("🎉 数据已入库！请前往「月度概览」查看。离开前别忘了去侧边栏下载数据备份！")
 
 global_df = st.session_state["my_df"].copy()
 
+# ==========================================
+# Tab 2: 月度消费概览
+# ==========================================
 with tab_dashboard:
     if global_df.empty:
-        st.info("暂无数据，请先上传账单或导入历史记录。")
+        # 空状态引导
+        st.markdown("---")
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            st.markdown("### 📥 第一步")
+            st.markdown("在「账单导入」标签页上传你的银行账单 (PDF 或 CSV)")
+        with col_b:
+            st.markdown("### 🧠 第二步")
+            st.markdown("AI 自动分类，你只需修正不对的地方")
+        with col_c:
+            st.markdown("### 📊 第三步")
+            st.markdown("回到这里查看你的月度消费饼图和趋势分析")
+        st.info("👈 请先去第一个标签页上传账单，或从左侧边栏导入历史记录。")
     else:
         global_df["年月"] = pd.to_datetime(global_df["日期"]).dt.to_period("M")
         available_months = sorted([str(m) for m in global_df["年月"].unique()], reverse=True)
@@ -450,6 +498,8 @@ with tab_dashboard:
             for i, row in enumerate(top_5.itertuples(), 1):
                 c1, c2, c3, c4 = st.columns([1, 4, 3, 2])
                 c1.markdown(f"**#{i}**"); c2.text(row.交易描述); c3.text(row.类别); c4.markdown(f"**$ {row.金额:.2f}**")
+        else:
+            st.info("本月暂无消费记录")
 
         st.markdown("---")
         st.subheader(f"日常支出构成图 ({selected_month}) - *不含房租*")
@@ -469,7 +519,6 @@ with tab_dashboard:
             st.markdown("#### 📝 本月所有消费明细")
             for category in sorted(current_month_df["类别"].unique()):
                 cat_df = current_month_df[current_month_df["类别"] == category].sort_values(by="金额")
-                # 🔧 FIX: 非消费项不计入金额
                 if category in ["💳 信用卡还款", "💰 内部转账", "其他收入"]:
                     exp_title = f"{category} (非消费项，共 {len(cat_df)} 笔)"
                 else:
@@ -496,9 +545,7 @@ with tab_dashboard:
                                 target_desc = row["交易描述"]
                                 new_cat = row["类别"]
 
-                                # 🔧 FIX: 绝对防御结界
-                                # 条件1: 精确匹配（用户直接点击的那一行）永远允许修改
-                                # 条件2: 相似名称连坐——但如果目标行含有免疫关键词（还款/转账），拒绝连坐！
+                                # 绝对防御结界：免疫项不被连坐
                                 mask = my_df["交易描述"].apply(
                                     lambda x: x == target_desc or (are_names_similar(x, target_desc) and not is_immune(x))
                                 )
@@ -512,10 +559,16 @@ with tab_dashboard:
                                     st.toast(f"🔒 '{target_desc}' 已存入本地私有记忆")
 
                             st.session_state["my_df"] = my_df
-                            st.success(f"🪄 关联更新：波及了 {total_updated} 条记录！")
+                            if total_updated > 1:
+                                st.success(f"🪄 智能关联更新：本次修改自动波及了 {total_updated} 条相似记录（含跨月份）！")
+                            else:
+                                st.success("✅ 已更新 1 条记录。")
                             st.rerun()
 
 
+# ==========================================
+# Tab 3: 历史趋势
+# ==========================================
 with tab_trends:
     if not global_df.empty:
         st.header("历史支出趋势追踪")
@@ -538,9 +591,16 @@ with tab_trends:
                         fig_line = px.line(filt, x="年月", y="绝对金额", color="类别", markers=True, color_discrete_sequence=px.colors.qualitative.Pastel)
                         fig_line.update_layout(yaxis=dict(rangemode="tozero"))
                         st.plotly_chart(fig_line, use_container_width=True)
+    else:
+        st.info("暂无数据，请先上传账单。")
 
+
+# ==========================================
+# Tab 4: 自定义多月导出
+# ==========================================
 with tab_export:
     st.header("📥 自定义多月组合导出")
+    st.markdown("自由选择一个或多个月份，生成合并后的分类饼图、支出趋势及交易明细，并导出为 CSV 或交互式 HTML。")
     if not global_df.empty:
         export_df = global_df.copy()
         export_df["Month"] = pd.to_datetime(export_df["日期"]).dt.strftime("%Y-%m")
@@ -554,13 +614,14 @@ with tab_export:
                 c1, c2 = st.columns(2)
                 pie_d = exp_df[exp_df["类别"] != "🏠 房租水电"]
                 cat_sum = pie_d.groupby("类别")["绝对金额"].sum().reset_index()
-                fig_ep = px.pie(cat_sum, values="绝对金额", names="类别", hole=0.4, title="合并支出占比(无房租)", color_discrete_sequence=px.colors.qualitative.Pastel)
-                with c1: st.plotly_chart(fig_ep, use_container_width=True)
+                fig_ep = px.pie(cat_sum, values="绝对金额", names="类别", hole=0.4, title="合并支出占比 (不含房租)", color_discrete_sequence=px.colors.qualitative.Pastel)
+                with c1:
+                    st.plotly_chart(fig_ep, use_container_width=True)
                 fig_et = None
                 with c2:
                     if len(sel_months) > 1:
                         td = exp_df.groupby(["Month", "类别"])["绝对金额"].sum().reset_index().sort_values("Month")
-                        fig_et = px.line(td, x="Month", y="绝对金额", color="类别", markers=True, color_discrete_sequence=px.colors.qualitative.Pastel)
+                        fig_et = px.line(td, x="Month", y="绝对金额", color="类别", markers=True, title="各类支出趋势对比", color_discrete_sequence=px.colors.qualitative.Pastel)
                         st.plotly_chart(fig_et, use_container_width=True)
                     else:
                         st.markdown(f"**🏆 {sel_months[0]} 支出分类排行**")
@@ -568,15 +629,19 @@ with tab_export:
 
                 st.markdown(f"#### 📝 所选月份交易明细 ({len(filt_df)} 笔)")
                 st.dataframe(filt_df.drop(columns=["Month", "年月", "绝对金额"], errors="ignore"), use_container_width=True)
+
                 st.markdown("### 📥 导出报告")
                 bc1, bc2 = st.columns(2)
                 with bc1:
                     csv_d = filt_df.drop(columns=["Month", "年月", "绝对金额"], errors="ignore").to_csv(index=False).encode("utf-8-sig")
                     st.download_button("📄 导出明细 (CSV)", csv_d, f"finance_{'_'.join(sel_months)}.csv", "text/csv")
                 with bc2:
-                    html = f"<html><head><meta charset='utf-8'><title>Report</title></head><body style='font-family:sans-serif;padding:20px'><h1>财务分析报告</h1><p>月份: {', '.join(sel_months)}</p><p>生成: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p><hr><h2>支出占比</h2>{fig_ep.to_html(full_html=False, include_plotlyjs='cdn')}"
-                    if fig_et: html += f"<h2>支出趋势</h2>{fig_et.to_html(full_html=False, include_plotlyjs='cdn')}"
+                    html = f"<html><head><meta charset='utf-8'><title>Finance Report</title></head><body style='font-family:sans-serif;padding:20px'><h1>个人财务分析报告</h1><p><strong>月份:</strong> {', '.join(sel_months)}</p><p><strong>生成时间:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M')}</p><hr><h2>1. 支出占比 (不含房租)</h2>{fig_ep.to_html(full_html=False, include_plotlyjs='cdn')}"
+                    if fig_et:
+                        html += f"<h2>2. 支出趋势对比</h2>{fig_et.to_html(full_html=False, include_plotlyjs='cdn')}"
                     html += "</body></html>"
                     st.download_button("📈 导出图表报告 (HTML)", html, f"report_{'_'.join(sel_months)}.html", "text/html")
             else:
                 st.warning("所选月份没有有效支出记录。")
+    else:
+        st.info("暂无数据，请先上传账单。")
